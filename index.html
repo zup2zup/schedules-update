@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Đẩy Lịch Bay Tự Động (Đã Sửa Giờ)</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 40px auto;
+            max-width: 850px;
+            padding: 0 20px;
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        h2 { text-align: center; color: #1a73e8; }
+        .upload-zone {
+            border: 3px dashed #1a73e8;
+            background-color: #fff;
+            padding: 40px;
+            text-align: center;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .upload-zone:hover { background-color: #e8f0fe; }
+        input[type="file"] { display: none; }
+        #status-container {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            font-weight: bold;
+            display: none;
+        }
+        .info { background-color: #e8f0fe; color: #1a73e8; }
+        .success { background-color: #e6f4ea; color: #137333; }
+        .error { background-color: #fce8e6; color: #c5221f; }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1a73e8;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+            display: none;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <h2>Hệ Thống Xử Lý & Tạo Sheet Lịch Bay Tự Động</h2>
+    
+    <div class="upload-zone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+        <p style="font-size: 18px; margin: 0;"><b>Kéo & Thả file lịch bay gốc vào đây</b></p>
+        <p style="color: #666; margin-top: 10px;">Hoặc nhấp chuột để chọn file từ máy tính (.xlsx, .xls, .csv)</p>
+        <input type="file" id="fileInput" accept=".xlsx, .xls, .csv">
+    </div>
+
+    <div class="loader" id="spinner"></div>
+    <div id="status-container"></div>
+
+    <script>
+        // === ĐIỀN URL WEB APP APPS SCRIPT CỦA BẠN VÀO ĐÂY ===
+        const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxZRvQvrQMWNuvOz6GDmdGFYxkUWYnt1lqgsvHJBQpT-8CaLPF5Z3F2s7UfouBmWWjp/exec";
+
+        const fileInput = document.getElementById('fileInput');
+        const dropzone = document.getElementById('dropzone');
+        const statusBox = document.getElementById('status-container');
+        const spinner = document.getElementById('spinner');
+
+        function showStatus(text, type) {
+            statusBox.style.display = "block";
+            statusBox.className = type;
+            statusBox.innerText = text;
+        }
+
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.backgroundColor = '#e8f0fe'; });
+        dropzone.addEventListener('dragleave', () => { dropzone.style.backgroundColor = '#fff'; });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.style.backgroundColor = '#fff';
+            if (e.dataTransfer.files.length > 0) processAndUpload(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) processAndUpload(e.target.files[0]);
+        });
+
+        function processAndUpload(file) {
+            spinner.style.display = "block";
+            showStatus("Đang đọc file và tự động quy đổi sang giờ Việt Nam (+7)...", "info");
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    let headerIndex = -1;
+                    for (let i = 0; i < rawData.length; i++) {
+                        if (rawData[i].includes('DATE') && rawData[i].includes('FLT')) {
+                            headerIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (headerIndex === -1) throw new Error("File tải lên sai cấu trúc lịch bay gốc.");
+
+                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, { range: headerIndex });
+                    let convertedRows = [];
+
+                    jsonRows.forEach(row => {
+                        if (!row['DATE'] || !row['FLT'] || !row['STD'] || !row['STA']) return;
+
+                        let dateStr = String(row['DATE']).trim();
+                        let stdStr = String(row['STD']).trim();
+                        let staStr = String(row['STA']).trim();
+                        let flt = String(Math.floor(parseFloat(row['FLT'])));
+                        let dep = String(row['DEP'] || '').trim();
+                        let arr = String(row['ARR'] || '').trim();
+
+                        let dateParts = dateStr.split('/');
+                        let day = parseInt(dateParts[0], 10);
+                        let month = parseInt(dateParts[1], 10) - 1;
+                        let year = parseInt(dateParts[2], 10);
+                        if (year < 100) year += 2000;
+
+                        let stdParts = stdStr.split(':');
+                        let stdHour = parseInt(stdParts[0], 10);
+                        let stdMin = parseInt(stdParts[1], 10);
+
+                        let staParts = staStr.split(':');
+                        let staHour = parseInt(staParts[0], 10);
+                        let staMin = parseInt(staParts[1], 10);
+
+                        // Khởi tạo đối tượng Date theo chuẩn UTC mốc tuyệt đối
+                        let stdUtc = new Date(Date.UTC(year, month, day, stdHour, stdMin));
+                        let staUtc = new Date(Date.UTC(year, month, day, staHour, staMin));
+
+                        // Xử lý chuyển ngày nếu giờ đến (STA) nhỏ hơn giờ đi (STD) của UTC
+                        if ((staHour * 60 + staMin) < (stdHour * 60 + stdMin)) {
+                            staUtc.setUTCDate(staUtc.getUTCDate() + 1);
+                        }
+
+                        // QUY ĐỔI SANG ICT (UTC+7) CHUẨN XÁC: Cộng đúng 7 tiếng vào timestamp tuyệt đối
+                        let stdVn = new Date(stdUtc.getTime() + (7 * 60 * 60 * 1000));
+                        let staVn = new Date(staUtc.getTime() + (7 * 60 * 60 * 1000));
+
+                        const pad = (num) => String(num).padStart(2, '0');
+
+                        // LẤY DỮ LIỆU THEO CHUẨN UTC ĐÃ CỘNG 7 (để triệt tiêu múi giờ local của trình duyệt máy tính)
+                        let vnDay = pad(stdVn.getUTCDate());
+                        let vnMonth = pad(stdVn.getUTCMonth() + 1);
+                        let vnYear = stdVn.getUTCFullYear();
+                        
+                        let vnStdHour = pad(stdVn.getUTCHours());
+                        let vnStdMin = pad(stdVn.getUTCMinutes());
+                        
+                        let vnStaHour = pad(staVn.getUTCHours());
+                        let vnStaMin = pad(staVn.getUTCMinutes());
+
+                        convertedRows.push({
+                            ngay: `${vnDay}/${vnMonth}/${vnYear}`,
+                            flt: flt,
+                            changBay: `${dep}${arr}`,
+                            gioDi: `${vnStdHour}:${vnStdMin}`,
+                            gioDen: `${vnStaHour}:${vnStaMin}`
+                        });
+                    });
+
+                    if (convertedRows.length === 0) throw new Error("Không có dữ liệu chuyến bay hợp lệ.");
+
+                    showStatus(`Đang tự động khởi tạo Sheet mới và dán ${convertedRows.length} chuyến bay lên Google Sheets...`, "info");
+
+                    fetch(WEB_APP_URL, {
+                        method: "POST",
+                        mode: "no-cors",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            fileName: file.name,
+                            rows: convertedRows
+                        })
+                    })
+                    .then(() => {
+                        spinner.style.display = "none";
+                        showStatus("🎉 Hoàn toàn thành công! Sheet mới chứa dữ liệu quy đổi GIỜ VIỆT NAM CHUẨN đã được nạp tự động vào Google Sheet của bạn.", "success");
+                        fileInput.value = ""; 
+                    })
+                    .catch(err => {
+                        spinner.style.display = "none";
+                        showStatus("Lỗi khi đồng bộ lên Google Sheet: " + err.message, "error");
+                    });
+
+                } catch (err) {
+                    spinner.style.display = "none";
+                    showStatus("Lỗi xử lý file: " + err.message, "error");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    </script>
+</body>
+</html>
