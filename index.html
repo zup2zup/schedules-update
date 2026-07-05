@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cập nhật Lịch bay</title>
+    <title>Hệ Thống Đẩy Lịch Bay Tự Động - Bản Chuẩn Hóa 100%</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
         body {
@@ -78,34 +78,20 @@
             statusBox.innerText = text;
         }
 
-        // BỘ ĐỌC GIỜ THÔNG MINH MỚI: Ép đọc mọi định dạng ô Excel (Dạng chuỗi, dạng Số, dạng Giờ có giây)
-        function parseExcelTime(cellValue) {
+        // Bộ phân tích thời gian đa năng (Xử lý chuỗi hiển thị thô "HH:MM", "HH:MM:SS")
+        function parseTextTime(cellValue) {
             if (!cellValue) return null;
-            
-            // Trường hợp 1: Nếu Excel trả về chuỗi (VD: "12:30:00" hoặc "12:30")
             let cleanStr = String(cellValue).trim();
+            
+            // Nếu chuỗi chứa dấu hai chấm rành mạch
             if (cleanStr.includes(':')) {
                 let parts = cleanStr.split(':');
                 let hour = parseInt(parts[0], 10);
                 let min = parseInt(parts[1], 10);
-                if (!isNaN(hour) && !isNaN(min)) return { hour: hour, min: min };
+                if (!isNaN(hour) && !isNaN(min)) {
+                    return { hour: hour, min: min };
+                }
             }
-            
-            // Trường hợp 2: Nếu Excel trả về số thập phân (tỷ lệ ngày, VD: 0.5208333 cho 12:30)
-            let num = parseFloat(cellValue);
-            if (!isNaN(num) && num >= 0 && num < 1) {
-                let totalSeconds = Math.round(num * 24 * 60 * 60);
-                let hour = Math.floor(totalSeconds / 3600);
-                let min = Math.floor((totalSeconds % 3600) / 60);
-                return { hour: hour, min: min };
-            }
-            
-            // Trường hợp 3: Nếu chuỗi quá dài chứa khoảng trắng (Ví dụ định dạng Date mặc định của JS)
-            let match = cleanStr.match(/(\d{2}):(\d{2}):(\d{2})/);
-            if (match) {
-                return { hour: parseInt(match[1], 10), min: parseInt(match[2], 10) };
-            }
-
             return null;
         }
 
@@ -123,16 +109,22 @@
 
         function processAndUpload(file) {
             spinner.style.display = "block";
-            showStatus("Đang đọc file và tự động xử lý quy đổi đồng bộ chuyến bay...", "info");
+            showStatus("Đang quét toàn bộ file theo chế độ đồng bộ text thuần túy...", "info");
 
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
                     const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
-                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
                     
-                    // Đọc dạng mảng thô (Mục đích tìm vị trí hàng tiêu đề DATE, FLT)
+                    // ĐỌC FILE Ở CHẾ ĐỘ HIỂN THỊ TEXT GỐC (Quan trọng: Không để Excel tự chuyển định dạng ô)
+                    const workbook = XLSX.read(data, { 
+                        type: 'array',
+                        cellDates: false,
+                        cellText: true,
+                        raw: false 
+                    });
+                    
+                    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
                     const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                     
                     let headerIndex = -1;
@@ -143,18 +135,22 @@
                         }
                     }
 
-                    if (headerIndex === -1) throw new Error("File tải lên sai cấu trúc lịch bay.");
+                    if (headerIndex === -1) throw new Error("File tải lên không tìm thấy hàng tiêu đề (DATE, FLT).");
 
-                    // Đọc dữ liệu chính xác (Giữ nguyên định dạng gốc của ô để parseTime không bị lỗi)
-                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, { range: headerIndex, defval: "" });
+                    // Ép xuất dạng chuỗi hiển thị chuẩn trực quan
+                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, { range: headerIndex, defval: "", raw: false });
                     let convertedRows = [];
 
                     jsonRows.forEach(row => {
-                        // Loại bỏ các hàng trống phân cách giữa các cụm máy bay
+                        // Loại bỏ hàng trống
                         if (!row['DATE'] || !row['FLT'] || !row['STD'] || !row['STA']) return;
 
                         let dateStr = String(row['DATE']).trim();
-                        let flt = String(Math.floor(parseFloat(row['FLT'])));
+                        
+                        // Lấy nguyên bản mã hiệu chuyến bay (Giữ nguyên chuỗi "280A", cắt ".0" phát sinh nếu có)
+                        let flt = String(row['FLT']).trim();
+                        if (flt.endsWith('.0')) flt = flt.substring(0, flt.length - 2);
+                        
                         let dep = String(row['DEP'] || '').trim();
                         let arr = String(row['ARR'] || '').trim();
 
@@ -165,9 +161,9 @@
                         let year = parseInt(dateParts[2], 10);
                         if (year < 100) year += 2000;
 
-                        // Áp dụng bộ lọc giờ thông minh mới
-                        let stdTime = parseExcelTime(row['STD']);
-                        let staTime = parseExcelTime(row['STA']);
+                        // Chuyển đổi giờ dựa trên chuỗi text thuần túy đã tối ưu hóa
+                        let stdTime = parseTextTime(row['STD']);
+                        let staTime = parseTextTime(row['STA']);
 
                         if (!stdTime || !staTime) return; 
 
@@ -178,7 +174,7 @@
                             staUtc.setUTCDate(staUtc.getUTCDate() + 1);
                         }
 
-                        // Cộng đúng 7 tiếng sang giờ ICT Việt Nam
+                        // Quy đổi đồng bộ sang múi giờ Việt Nam (UTC + 7)
                         let stdVn = new Date(stdUtc.getTime() + (7 * 60 * 60 * 1000));
                         let staVn = new Date(staUtc.getTime() + (7 * 60 * 60 * 1000));
 
@@ -203,9 +199,9 @@
                         });
                     });
 
-                    if (convertedRows.length === 0) throw new Error("Không tìm thấy dữ liệu chuyến bay phù hợp.");
+                    if (convertedRows.length === 0) throw new Error("Không trích xuất được dữ liệu hợp lệ.");
 
-                    showStatus(`Đang tiến hành tạo Sheet mới và cập nhật ${convertedRows.length} chuyến bay lên Google Sheets...`, "info");
+                    showStatus(`Đang tiến hành tạo riêng Sheet mới và nạp đồng bộ ${convertedRows.length} chuyến bay lên Google Sheets...`, "info");
 
                     fetch(WEB_APP_URL, {
                         method: "POST",
@@ -218,7 +214,7 @@
                     })
                     .then(() => {
                         spinner.style.display = "none";
-                        showStatus(`🎉 Hoàn tất thành công! Hệ thống đã nhận diện và xử lý đủ ${convertedRows.length} chuyến bay sang Giờ Việt Nam.`, "success");
+                        showStatus(`🎉 Tuyệt vời! Hệ thống đã nhận diện chính xác và tự động nạp thành công toàn bộ ${convertedRows.length} chuyến bay (Bao gồm cả các chuyến bay định dạng chữ 280A) lên Google Sheet!`, "success");
                         fileInput.value = ""; 
                     })
                     .catch(err => {
