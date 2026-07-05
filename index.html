@@ -214,7 +214,7 @@
                     })
                     .then(() => {
                         spinner.style.display = "none";
-                        showStatus(`🎉 Tuyệt vời! Hệ thống đã nhận diện chính xác và tự động nạp thành công toàn bộ ${convertedRows.length} chuyến bay (Bao gồm cả các chuyến bay định dạng chữ 280A) lên Google Sheet!`, "success");
+                        showStatus(`🎉 Hoàn tất cập nhật! Hệ thống đã nhận diện chính xác và tự động nạp thành công toàn bộ ${convertedRows.length} chuyến bay lên Google Sheet!`, "success");
                         fileInput.value = ""; 
                     })
                     .catch(err => {
